@@ -2,7 +2,7 @@
 
 open Microsoft.WindowsAzure
 open Microsoft.WindowsAzure.ServiceRuntime
-open Microsoft.WindowsAzure.StorageClient
+open Microsoft.WindowsAzure.Storage
 open Microsoft.FSharp.Reflection
 open System.Reflection
 

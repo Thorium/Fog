@@ -52,7 +52,7 @@ let private createMessageSender (manager:NamespaceManager) (tokenProvider:TokenP
              factory.CreateMessageSender(name) ) 
            manager.Address.AbsoluteUri tokenProvider targetName
 
-let private sendMessageToQueueOrTopic (manager:NamespaceManager) (tokenProvider:TokenProvider) (targetName:string) message =
+let private sendMessageToQueueOrTopic (manager:NamespaceManager) (tokenProvider:TokenProvider) (targetName:string) (message:obj) =
     let messageSender = createMessageSender manager tokenProvider targetName
     use message = new BrokeredMessage(message)
     messageSender.Send(message)

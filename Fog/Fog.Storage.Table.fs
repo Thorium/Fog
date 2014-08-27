@@ -1,10 +1,6 @@
 ﻿module Fog.Storage.Table
 
-open Microsoft.WindowsAzure
-open Microsoft.WindowsAzure.ServiceRuntime
-open Microsoft.WindowsAzure.StorageClient
-open System.Data.Services.Client
-open System.IO
+open Microsoft.WindowsAzure.Storage.Table
 open Fog.Core
 
 let BuildTableClientWithConnStr(connectionString) =
@@ -15,37 +11,50 @@ let BuildTableClientWithConnStr(connectionString) =
 
 let BuildTableClient() = BuildTableClientWithConnStr "TableStorageConnectionString"
 
-let CreateEntityWithClient (client:CloudTableClient) (tableName:string) entity = 
-    let context = client.GetDataServiceContext()
-    client.CreateTableIfNotExist <| tableName.ToLower() |> ignore
-    context.AddObject(tableName, entity)
-    context.SaveChangesWithRetries(SaveChangesOptions.ReplaceOnUpdate) |> ignore
 
-let DeleteEntityWithDataContext (client:CloudTableClient) (tableName:string) entity =
-    let context = client.GetDataServiceContext() 
-    context.AttachTo(tableName, entity, "*")
-    context.DeleteObject(entity)
-    context.SaveChangesWithRetries() |> ignore
+let private doTableAction (client:CloudTableClient) (tableName:string) (operation:TableOperation) =
+    let table = client.GetTableReference(tableName)
+    table.ExecuteAsync(operation) |> Async.AwaitTask
 
-let UpdateEntityWithClient (client:CloudTableClient) (tableName:string) entity = 
-    // TODO: Consider updating this to use ReplaceOnUpdate once the storage emulator supports it.
-    DeleteEntityWithDataContext client tableName entity
-    CreateEntityWithClient client tableName entity
+let private doTableActionWithCreate (client:CloudTableClient) (tableName:string) (operation:TableOperation) =
+    async {
+        let table = client.GetTableReference(tableName)
+        let! created = table.CreateIfNotExistsAsync() |> Async.AwaitTask
+        return! table.ExecuteAsync(operation) |> Async.AwaitTask
+    }
+
+let CreateEntityWithClient client tableName (entity: 'a) = 
+    let dynEntity = entity |> box :?> DynamicTableEntity
+    doTableActionWithCreate client tableName (TableOperation.Insert dynEntity)
+
+let DeleteEntityWithDataContext client tableName (entity: 'a) =
+    let dynEntity = entity |> box :?> DynamicTableEntity
+    doTableAction client tableName (TableOperation.Delete dynEntity)
+
+let UpdateEntityWithClient client tableName (entity: 'a) = 
+    let dynEntity = entity |> box :?> DynamicTableEntity
+    doTableAction client tableName (TableOperation.Replace dynEntity)
+
+let CreateOrUpdateEntityWithClient client tableName (entity: 'a) = 
+    let dynEntity = entity |> box :?> DynamicTableEntity
+    doTableActionWithCreate client tableName (TableOperation.InsertOrReplace dynEntity)
 
 let DeleteTableWithClient (client:CloudTableClient) (tableName:string) = 
-    client.DeleteTableIfExist tableName |> ignore
+    let table = client.GetTableReference(tableName)
+    table.DeleteIfExistsAsync() |> Async.AwaitTask
 
 let CreateTableWithClient (client:CloudTableClient) (tableName:string) = 
-    client.CreateTableIfNotExist tableName |> ignore
+    let table = client.GetTableReference(tableName)
+    table.CreateIfNotExistsAsync() |> Async.AwaitTask
 
-let CreateEntity (tableName:string) entity = 
+let CreateEntity (tableName:string) (entity: 'a) = 
     let client = BuildTableClient()
-    CreateEntityWithClient client tableName entity
+    CreateEntityWithClient client tableName entity 
 
-let UpdateEntity (tableName:string) newEntity = 
+let UpdateEntity (tableName:string) (newEntity: 'a) = 
     let client = BuildTableClient()
     UpdateEntityWithClient client tableName newEntity
 
-let DeleteEntity (tableName:string) entity = 
+let DeleteEntity (tableName:string) (entity: 'a) = 
     let client = BuildTableClient()
     DeleteEntityWithDataContext client tableName entity

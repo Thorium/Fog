@@ -4,7 +4,8 @@ open System
 open NUnit.Framework
 open FsUnit
 open Microsoft.WindowsAzure
-open Microsoft.WindowsAzure.StorageClient
+open Microsoft.WindowsAzure.Storage
+open Microsoft.WindowsAzure.Storage.Table
 open Microsoft.WindowsAzure.ServiceRuntime
 open System.Data.Services.Common
 open System.Text
@@ -13,14 +14,11 @@ open Fog.Storage.Table
 open System.IO
 open Microsoft.FSharp.Linq.Query
 
-[<DataServiceKey("PartitionKey", "RowKey")>]
-type TestRecord() = 
-    let mutable partitionKey = ""
-    let mutable rowKey = ""
-    let mutable name = ""
-    member x.PartitionKey with get() = partitionKey and set v = partitionKey <- v
-    member x.RowKey with get() = rowKey and set v = rowKey <- v
-    member x.Name with get() = name and set v = name <- v
+type TestRecord(p, r, n) =
+    inherit TableEntity(p, r)
+    new(name) = TestRecord("TestPart", Guid.NewGuid().ToString(), name)
+    new() = TestRecord("")
+    member val Name = n with get, set
 
 let ``It should create a table storage client with a convention based connectionString``() = 
     BuildTableClient().BaseUri.AbsoluteUri |> should equal "http://127.0.0.1:10002/devstoreaccount1"
@@ -31,75 +29,85 @@ let ``It should create a table storage client with a provided connectionString``
 
 let ``It should add a record to a specified table``() = 
     let client = BuildTableClient()
-    let testRecord = TestRecord( PartitionKey = "TestPart", RowKey = Guid.NewGuid().ToString(), Name = "test" )
-    CreateEntityWithClient client "testtable" testRecord
-    let context = client.GetDataServiceContext()
-    let result =
-        query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                         if e.PartitionKey = testRecord.PartitionKey && e.RowKey = testRecord.RowKey then
-                           yield e } @> |> Seq.head    
+    let testRecord = TestRecord("test")
+    CreateEntityWithClient client "testtable" testRecord |> Async.RunSynchronously |> ignore
+    let table = client.GetTableReference("testtable")
+
+    let query = 
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, testRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, testRecord.RowKey))                
+    let result = table.ExecuteQuery<TestRecord>(query) |> Seq.head
     result.Name |> should equal "test"
 
 let ``It should allow updating a record``() = 
     let client = BuildTableClient()
-    let context = client.GetDataServiceContext()
-    let testRecord = TestRecord( PartitionKey = "TestPart", RowKey = Guid.NewGuid().ToString(), Name = "test" )
-    CreateEntityWithClient client "testtable" testRecord
-    let resultRecord =
-        query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                         if e.PartitionKey = testRecord.PartitionKey && e.RowKey = testRecord.RowKey then
-                           yield e } @> |> Seq.head    
+    let table = client.GetTableReference("testtable")
+    let testRecord = TestRecord("test")
+    CreateEntityWithClient client "testtable" testRecord |> Async.RunSynchronously |> ignore
+    let query1 =
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, testRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, testRecord.RowKey))
+    let result = table.ExecuteQuery<TestRecord>(query1) |> Seq.head
     
     let updateRecord = testRecord 
     updateRecord.Name <- "test2"
-    UpdateEntityWithClient client "testtable" updateRecord
-    let result =
-        query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                         if e.PartitionKey = testRecord.PartitionKey && e.RowKey = testRecord.RowKey then
-                           yield e } @> |> Seq.head    
+    UpdateEntityWithClient client "testtable" updateRecord |> Async.RunSynchronously |> ignore
+    let query2 =
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, testRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, testRecord.RowKey))
+    let result = table.ExecuteQuery<TestRecord>(query2) |> Seq.head
+
     result.Name |> should equal "test2"
 
 let ``It should allow deleting a record``() = 
     let client = BuildTableClient()
     let testRecord = TestRecord( PartitionKey = "TestPart", RowKey = Guid.NewGuid().ToString(), Name = "test" )
-    CreateEntityWithClient client "testtable" testRecord
-    let context = client.GetDataServiceContext()
-    let resultRecord =
-        query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                         if e.PartitionKey = testRecord.PartitionKey && e.RowKey = testRecord.RowKey then
-                           yield e } @> |> Seq.head    
-    DeleteEntityWithDataContext client "testtable" resultRecord
+    CreateEntityWithClient client "testtable" testRecord |> Async.RunSynchronously |> ignore
+    let table = client.GetTableReference("testtable")
+    let query = 
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, testRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, testRecord.RowKey))                
+    let resultRecord = table.ExecuteQuery<TestRecord>(query) |> Seq.head
+    DeleteEntityWithDataContext client "testtable" resultRecord |> Async.RunSynchronously |> ignore
 
 let ``It should allow creating and deleting a table``() = 
     let client = BuildTableClient()
-    client.DoesTableExist "testtable2" |> should equal false
-    CreateTableWithClient client "testtable2"
-    client.DoesTableExist "testtable2" |> should equal true
-    DeleteTableWithClient client "testtable2"
-    client.DoesTableExist "testtable2" |> should equal false
+    let table = client.GetTableReference("testtable2")
+    table.Exists |> should equal false
+    CreateTableWithClient client "testtable2" |> Async.RunSynchronously |> ignore
+    table.Exists |> should equal true
+    DeleteTableWithClient client "testtable2" |> Async.RunSynchronously |> ignore
+    table.Exists |> should equal false
 
 let ``It should allow easy creation of a record``() =
     let testRecord = TestRecord( PartitionKey = "TestPart", RowKey = Guid.NewGuid().ToString(), Name = "test" )
-    CreateEntity "testtable" testRecord |> ignore
+    CreateEntity "testtable" testRecord |> Async.RunSynchronously |> ignore
     let client = BuildTableClient()
-    let context = client.GetDataServiceContext()
-    let result = query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                                  if e.PartitionKey = testRecord.PartitionKey && e.RowKey = testRecord.RowKey then
-                                    yield e } @> |> Seq.head    
+    let table = client.GetTableReference("testtable")
+    let query = 
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, testRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, testRecord.RowKey))                
+    let result = table.ExecuteQuery<TestRecord>(query) |> Seq.head
     result.Name |> should equal "test"
 
 let ``It should allow easy update of a record``() =
     let originalRecord = TestRecord( PartitionKey = "TestPart", RowKey = Guid.NewGuid().ToString(), Name = "test" )
-    CreateEntity "testtable" originalRecord |> ignore
+    CreateEntity "testtable" originalRecord |> Async.RunSynchronously |> ignore
     let newRecord = originalRecord
     newRecord.Name <- "test2"
-    UpdateEntity "testtable" newRecord |> ignore
+    UpdateEntity "testtable" newRecord |> Async.RunSynchronously |> ignore
     let client = BuildTableClient()
-    let context = client.GetDataServiceContext()
-    let result = 
-        query <@ seq { for e in context.CreateQuery<TestRecord>("testtable") do
-                         if e.PartitionKey = originalRecord.PartitionKey && e.RowKey = originalRecord.RowKey then
-                           yield e } @> |> Seq.head    
+    let table = client.GetTableReference("testtable")
+    let query = 
+        (TableQuery<TestRecord>())
+            .Where(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, newRecord.PartitionKey))
+            .Where(TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, newRecord.RowKey))                
+    let result = table.ExecuteQuery<TestRecord>(query) |> Seq.head
     result.Name |> should equal "test2"
 
 // TODO:

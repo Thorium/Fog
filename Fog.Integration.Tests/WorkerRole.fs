@@ -9,7 +9,6 @@ open System.Threading
 open Microsoft.WindowsAzure
 open Microsoft.WindowsAzure.Diagnostics
 open Microsoft.WindowsAzure.ServiceRuntime
-open Microsoft.WindowsAzure.StorageClient
 
 type WorkerRole() =
     inherit RoleEntryPoint() 

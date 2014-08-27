@@ -19,55 +19,55 @@ let ``It should create a queue storage client with a provided connectionString``
 
 let client = BuildQueueClient()
 let queue = GetQueueReference client "testQueue"
-DeleteQueueWithClient client "testQueue"
+DeleteQueueWithClient client "testQueue" |> Async.RunSynchronously |> ignore
 
 let ``It should allow creation of a queue``() = 
-    let queue = CreateQueueWithClient client "testQueue"
+    let queue = CreateQueueWithClient client "testQueue" |> Async.RunSynchronously
     queue.Name |> should equal "testqueue"
 
 let ``It should allow adding a string message to a queue``() =
-    let result = AddMessageWithClient client "testqueue" "This is a test message"
+    let result = AddMessageWithClient client "testqueue" "This is a test message" |> Async.RunSynchronously
     let message = result.GetMessage()
     message.AsString |> should equal "This is a test message"
-    DeleteMessageWithClient client "testqueue" message
+    DeleteMessageWithClient client "testqueue" message |> Async.RunSynchronously
 
 let ``It should allow adding a byte array message to a queue``() =    
-    DeleteQueueWithClient client "testqueuebytes"
+    DeleteQueueWithClient client "testqueuebytes" |> Async.RunSynchronously |> ignore
     let testBytes = Encoding.ASCII.GetBytes("This is a test")
-    let result = AddMessageWithClient client "testqueuebytes" testBytes
+    let result = AddMessageWithClient client "testqueuebytes" testBytes |> Async.RunSynchronously
     let message = result.GetMessage()
     message.AsBytes |> should equal testBytes 
-    DeleteMessageWithClient client "testqueuebytes" message
+    DeleteMessageWithClient client "testqueuebytes" message |> Async.RunSynchronously
 
 let ``It should allow a queue to be deleted``() =
-    CreateQueueWithClient client "testQueue2" |> ignore
-    DeleteQueueWithClient client "testQueue2"
+    CreateQueueWithClient client "testQueue2" |> Async.RunSynchronously |> ignore
+    DeleteQueueWithClient client "testQueue2" |> Async.RunSynchronously |> ignore
 
 let ``It should allow retrieval of a single message``() =
-    AddMessageWithClient client "testqueue" "This is a test message" |> ignore
-    let result = GetMessageWithClient client "testqueue"
+    AddMessageWithClient client "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
+    let result = GetMessageWithClient client "testqueue" |> Async.RunSynchronously
     result.AsString |> should equal "This is a test message"
 
 let ``It should allow retrieval of multiple messages``() =
-    AddMessageWithClient client "testqueue" "This is a test message" |> ignore
-    AddMessageWithClient client "testqueue" "This is a test message" |> ignore
-    let result = GetMessagesWithClient client "testqueue" 20 5
+    AddMessageWithClient client "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
+    AddMessageWithClient client "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
+    let result = GetMessagesWithClient client "testqueue" 20 5 |> Async.RunSynchronously
     for m in result do
-        DeleteMessageWithClient client "testqueue" m
+        DeleteMessageWithClient client "testqueue" m |> Async.RunSynchronously
 
 let ``It should add a message with an easy function``() =
-    AddMessage "testqueue" "This is a test message" |> ignore
+    AddMessage "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
 
 let ``It should get a message with an easy function``() =
-    AddMessage "testqueue" "This is a test message" |> ignore
-    let result = GetMessage "testqueue" 
+    AddMessage "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
+    let result = GetMessage "testqueue" |> Async.RunSynchronously
     result.AsString |> should equal "This is a test message"
 
 let ``It should delete a message with an easy function``() =
-    AddMessage "testqueue" "This is a test message" |> ignore
-    let result = GetMessages "testqueue" 20 5
+    AddMessage "testqueue" "This is a test message" |> Async.RunSynchronously |> ignore
+    let result = GetMessages "testqueue" 20 5 |> Async.RunSynchronously
     for m in result do
-        DeleteMessage "testqueue" m
+        DeleteMessage "testqueue" m |> Async.RunSynchronously
 
 // TODO:
 // 3. Add async version of the most important functions (i.e. download/upload) -> Might wait until VS11 support is added. These will likely be provided OOTB.

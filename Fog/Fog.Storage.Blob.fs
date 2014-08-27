@@ -1,10 +1,9 @@
 ﻿module Fog.Storage.Blob
 
-open Microsoft.WindowsAzure
-open Microsoft.WindowsAzure.ServiceRuntime
-open Microsoft.WindowsAzure.StorageClient
+open Microsoft.WindowsAzure.Storage.Blob
 open System.IO
 open Fog.Core
+open System.Text
 
 let BuildBlobClientWithConnStr(connectionString) =
     memoize (fun conn -> 
@@ -15,64 +14,114 @@ let BuildBlobClient() = BuildBlobClientWithConnStr "BlobStorageConnectionString"
 
 let GetBlobContainer (client:CloudBlobClient) (containerName:string) = 
     let container = client.GetContainerReference <| containerName.ToLower()
-    container.CreateIfNotExist() |> ignore
-    container
+    async {
+        let! ok = container.CreateIfNotExistsAsync() |> Async.AwaitTask
+        return container
+    }
 
 let DeleteBlobContainer (blobContainer:CloudBlobContainer) = 
-    blobContainer.Delete()
+    blobContainer.DeleteIfExistsAsync() |> Async.AwaitTask
 
-let GetBlobReferenceInContainer (container:CloudBlobContainer) (name:string) : CloudBlob = 
-    container.GetBlobReference <| name.ToLower() 
+let GetBlobReferenceInContainer (container:CloudBlobContainer) (name:string) : Async<ICloudBlob> = 
+    container.GetBlobReferenceFromServerAsync <| name.ToLower() |> Async.AwaitTask
 
-let GetBlobReference (containerName:string) name : CloudBlob = 
-    let container = GetBlobContainer <| BuildBlobClient() <| containerName
-    GetBlobReferenceInContainer container name
+let GetBlobReference (containerName:string) name : Async<ICloudBlob> = 
+    async{ 
+        let! container = GetBlobContainer <| BuildBlobClient() <| containerName
+        return! GetBlobReferenceInContainer container name
+    }
 
 let UploadBlobToContainer<'a> (container:CloudBlobContainer) (blobName:string) (item:'a) = 
-    let blob = GetBlobReferenceInContainer container blobName
-    match box item with
-    | :? Stream as s -> blob.UploadFromStream s
-    | :? string as text -> blob.UploadText text
-    | :? (byte[]) as b -> blob.UploadByteArray b
-    | _ -> failwith "This type is not supported"
-    blob
+    let doTask = Async.AwaitIAsyncResult >> Async.Ignore
+    async {
+        let! blob = GetBlobReferenceInContainer container blobName
+        match box item with
+        | :? Stream as s -> 
+            do! blob.UploadFromStreamAsync s |> doTask
+        | :? (byte[]) as b -> 
+            do! blob.UploadFromByteArrayAsync(b, 0, b.Length) |> doTask
+        | :? string as str -> 
+            let enc = Encoding.ASCII.GetBytes(str)
+            use ms = new MemoryStream(enc)
+            do! blob.UploadFromStreamAsync ms |> doTask
+        | _ -> 
+            failwith "This type is not supported"
+            use ms = new MemoryStream()
+            let formatter = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter();
+            formatter.Serialize(ms, item);
+            do! blob.UploadFromStreamAsync ms |> doTask
+        return blob
+    }
 
 let UploadBlob<'a> (containerName:string) (blobName:string) (item:'a) = 
-    let container = GetBlobContainer <| BuildBlobClient() <| containerName
-    UploadBlobToContainer<'a> container blobName item
+    async{ 
+        let! container = GetBlobContainer <| BuildBlobClient() <| containerName
+        return! UploadBlobToContainer<'a> container blobName item
+    }
 
 let DownloadBlobStreamFromContainer (container:CloudBlobContainer) (blobName:string) (stream:#Stream) = 
-    let blob = GetBlobReferenceInContainer container blobName
-    blob.DownloadToStream stream
-    stream.Seek(0L, SeekOrigin.Begin) |> ignore
+    async{
+        let! blob = GetBlobReferenceInContainer container blobName
+        let! res = blob.DownloadToStreamAsync stream |> Async.AwaitIAsyncResult
+        stream.Seek(0L, SeekOrigin.Begin) |> ignore
+    }
 
 let DownloadBlobStream containerName blobName (stream:#Stream) = 
-    let container = GetBlobContainer <| BuildBlobClient() <| containerName
-    DownloadBlobStreamFromContainer container blobName stream
+    async{ 
+        let! container = GetBlobContainer <| BuildBlobClient() <| containerName
+        do! DownloadBlobStreamFromContainer container blobName stream
+    }
 
 let DownloadBlobFromContainer<'a> (container:CloudBlobContainer) (blobName:string) = 
-    let blob = GetBlobReferenceInContainer container blobName
-    match typeof<'a> with
-    | str when str = typeof<string> -> blob.DownloadText() |> box :?> 'a
-    | b when b = typeof<byte[]> -> blob.DownloadByteArray() |> box :?> 'a
-    | _ -> failwith "This type is not supported"
+    let doTask = Async.AwaitIAsyncResult >> Async.Ignore
+    async{
+        let! blob = GetBlobReferenceInContainer container blobName
+        match typeof<'a> with
+        | st when st = typeof<Stream> -> 
+            use ms = new MemoryStream()
+            do! blob.DownloadToStreamAsync(ms) |> doTask
+            return ms :> Stream |> box :?> 'a
+        | b when b = typeof<byte[]> -> 
+            let ba: byte [] = Array.zeroCreate 0
+            let! ok = blob.DownloadToByteArrayAsync(ba, 0) |> Async.AwaitTask
+            return ba |> box :?> 'a
+        | str when str = typeof<string> -> 
+            use ms = new MemoryStream()
+            do! blob.DownloadToStreamAsync(ms) |> doTask           
+            return Encoding.ASCII.GetString(ms.ToArray()) |> box :?> 'a
+        | _ -> 
+            failwith "This type is not supported"
+            use ms = new MemoryStream()
+            do! blob.DownloadToStreamAsync(ms) |> doTask
+            let formatter = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter();
+            ms.Seek(0L, SeekOrigin.Begin) |> ignore
+            match ms.Length with
+            | 0L -> return Unchecked.defaultof<'a>
+            | _ -> return formatter.Deserialize(ms) |> box :?> 'a
+    }
 
 let DownloadBlob<'a> (containerName:string) (blobName:string) = 
-    let container = GetBlobContainer <| BuildBlobClient() <| containerName
-    DownloadBlobFromContainer<'a> container blobName
+    async {
+        let! container = GetBlobContainer <| BuildBlobClient() <| containerName
+        return! DownloadBlobFromContainer<'a> container blobName
+    }
 
 let DeleteBlobFromContainer (container:CloudBlobContainer) (blobName:string) = 
-    let blob = GetBlobReferenceInContainer container blobName
-    blob.Delete()
+    async {
+        let! blob = GetBlobReferenceInContainer container blobName
+        return! blob.DeleteIfExistsAsync() |> Async.AwaitTask
+    }
 
 let DeleteBlob (containerName) (blobName:string) = 
-    let container = GetBlobContainer <| BuildBlobClient() <| containerName
-    DeleteBlobFromContainer container blobName
+    async {
+        let! container = GetBlobContainer <| BuildBlobClient() <| containerName
+        return! DeleteBlobFromContainer container blobName
+    }
 
-let GetBlobMetadata (blobReference:CloudBlob) = 
+let GetBlobMetadata (blobReference:ICloudBlob) = 
     blobReference.FetchAttributes()
     blobReference.Metadata
 
-let SetBlobMetadata (metadata:list<string*string>) (blobReference:CloudBlob) = 
+let SetBlobMetadata (metadata:list<string*string>) (blobReference:ICloudBlob) = 
     metadata |> Seq.iter(fun (k,v) -> blobReference.Metadata.Add(k, v))
     blobReference.SetMetadata()

@@ -1,10 +1,7 @@
 ﻿module Fog.Storage.Queue
 
 open System
-open Microsoft.WindowsAzure
-open Microsoft.WindowsAzure.ServiceRuntime
-open Microsoft.WindowsAzure.StorageClient
-open System.Data.Services.Client
+open Microsoft.WindowsAzure.Storage.Queue
 open Fog.Core
 
 let BuildQueueClientWithConnStr(connectionString) =
@@ -18,33 +15,45 @@ let GetQueueReference (client:CloudQueueClient) (queueName:string) =
     client.GetQueueReference <| queueName.ToLower()
 
 let CreateQueueWithClient (client:CloudQueueClient) (queueName:string) =
-    let queue = GetQueueReference client queueName
-    queue.CreateIfNotExist() |> ignore
-    queue
+    async {
+        let queue = GetQueueReference client queueName
+        let! ok = queue.CreateIfNotExistsAsync() |> Async.AwaitTask
+        return queue
+    }
 
 let DeleteQueueWithClient (client:CloudQueueClient) (queueName:string) =
     let queue = GetQueueReference client queueName
-    if queue.Exists() then queue.Delete()
+    queue.DeleteIfExistsAsync() |> Async.AwaitTask
 
 let AddMessageWithClient (client:CloudQueueClient) (queueName:string) content =
-    let queue = CreateQueueWithClient client queueName
-    match box content with
-    | :? string as s -> queue.AddMessage(CloudQueueMessage(s))
-    | :? (byte[]) as b -> queue.AddMessage(CloudQueueMessage(b))
-    | _ -> failwith "The provided content is not of a support type (i.e. string or byte[]"
-    queue
+    async {
+        let! queue = CreateQueueWithClient client queueName
+        let! ok =
+            match box content with
+            | :? string as s -> queue.AddMessageAsync(CloudQueueMessage(s)) |> Async.AwaitIAsyncResult
+            | :? (byte[]) as b -> queue.AddMessageAsync(CloudQueueMessage(b)) |> Async.AwaitIAsyncResult
+            | _ -> failwith "The provided content is not of a support type (i.e. string or byte[]"
+        return queue
+    }
 
 let DeleteMessageWithClient (client:CloudQueueClient) (queueName:string) (message:CloudQueueMessage) =
-    let queue = CreateQueueWithClient client queueName
-    queue.DeleteMessage(message)
+    async {
+        let! queue = CreateQueueWithClient client queueName
+        return! queue.DeleteMessageAsync(message) |> Async.AwaitIAsyncResult |> Async.Ignore
+    }
 
 let GetMessageWithClient (client:CloudQueueClient) (queueName:string) = 
-    let queue = CreateQueueWithClient client queueName
-    queue.GetMessage()
+    async {
+        let! queue = CreateQueueWithClient client queueName
+        return! queue.GetMessageAsync() |> Async.AwaitTask
+    }
 
 let GetMessagesWithClient (client:CloudQueueClient) (queueName:string) (messageCount:int) (ttlInMinutes:int) = 
-    let queue = CreateQueueWithClient client queueName
-    queue.GetMessages(messageCount, TimeSpan.FromMinutes(float ttlInMinutes))
+    async {
+        let! queue = CreateQueueWithClient client queueName
+        let cancel = new System.Threading.CancellationTokenSource(ttlInMinutes*60*1000)
+        return! queue.GetMessagesAsync(messageCount, cancel.Token) |> Async.AwaitTask
+    }
 
 let AddMessage (queueName:string) content  =
     let client = BuildQueueClient()
