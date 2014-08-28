@@ -24,19 +24,19 @@ let private doTableActionWithCreate (client:CloudTableClient) (tableName:string)
     }
 
 let CreateEntityWithClient client tableName (entity: 'a) = 
-    let dynEntity = entity |> box :?> DynamicTableEntity
+    let dynEntity = entity |> box :?> TableEntity
     doTableActionWithCreate client tableName (TableOperation.Insert dynEntity)
 
 let DeleteEntityWithDataContext client tableName (entity: 'a) =
-    let dynEntity = entity |> box :?> DynamicTableEntity
+    let dynEntity = entity |> box :?> TableEntity
     doTableAction client tableName (TableOperation.Delete dynEntity)
 
 let UpdateEntityWithClient client tableName (entity: 'a) = 
-    let dynEntity = entity |> box :?> DynamicTableEntity
+    let dynEntity = entity |> box :?> TableEntity
     doTableAction client tableName (TableOperation.Replace dynEntity)
 
 let CreateOrUpdateEntityWithClient client tableName (entity: 'a) = 
-    let dynEntity = entity |> box :?> DynamicTableEntity
+    let dynEntity = entity |> box :?> TableEntity
     doTableActionWithCreate client tableName (TableOperation.InsertOrReplace dynEntity)
 
 let DeleteTableWithClient (client:CloudTableClient) (tableName:string) = 

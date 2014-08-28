@@ -38,5 +38,5 @@ type WorkerRole() =
             //duration Storage.Load.Tests.RunTableTest
             //duration Storage.Load.Tests.RunQueueTest
         with
-        | ex -> log ex.Message "ERROR"
+        | ex -> log (ex.GetBaseException()).Message "ERROR"
     override wr.OnStart() = base.OnStart()

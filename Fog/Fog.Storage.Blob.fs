@@ -22,34 +22,30 @@ let GetBlobContainer (client:CloudBlobClient) (containerName:string) =
 let DeleteBlobContainer (blobContainer:CloudBlobContainer) = 
     blobContainer.DeleteIfExistsAsync() |> Async.AwaitTask
 
-let GetBlobReferenceInContainer (container:CloudBlobContainer) (name:string) : Async<ICloudBlob> = 
-    container.GetBlobReferenceFromServerAsync <| name.ToLower() |> Async.AwaitTask
+let GetBlobReferenceInContainer (container:CloudBlobContainer) (name:string) : CloudBlockBlob = 
+    container.GetBlockBlobReference <| name.ToLower()
 
-let GetBlobReference (containerName:string) name : Async<ICloudBlob> = 
+let GetBlobReference (containerName:string) name : Async<CloudBlockBlob> = 
     async{ 
         let! container = GetBlobContainer <| BuildBlobClient() <| containerName
-        return! GetBlobReferenceInContainer container name
+        return GetBlobReferenceInContainer container name
     }
 
 let UploadBlobToContainer<'a> (container:CloudBlobContainer) (blobName:string) (item:'a) = 
     let doTask = Async.AwaitIAsyncResult >> Async.Ignore
     async {
-        let! blob = GetBlobReferenceInContainer container blobName
+        let blob = GetBlobReferenceInContainer container blobName
         match box item with
         | :? Stream as s -> 
             do! blob.UploadFromStreamAsync s |> doTask
-        | :? (byte[]) as b -> 
-            do! blob.UploadFromByteArrayAsync(b, 0, b.Length) |> doTask
         | :? string as str -> 
             let enc = Encoding.ASCII.GetBytes(str)
-            use ms = new MemoryStream(enc)
+            use ms = new MemoryStream(enc, 0, enc.Length)
             do! blob.UploadFromStreamAsync ms |> doTask
+        | :? (byte[]) as b -> 
+            do! blob.UploadFromByteArrayAsync(b, 0, b.Length) |> doTask
         | _ -> 
             failwith "This type is not supported"
-            use ms = new MemoryStream()
-            let formatter = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter();
-            formatter.Serialize(ms, item);
-            do! blob.UploadFromStreamAsync ms |> doTask
         return blob
     }
 
@@ -61,7 +57,7 @@ let UploadBlob<'a> (containerName:string) (blobName:string) (item:'a) =
 
 let DownloadBlobStreamFromContainer (container:CloudBlobContainer) (blobName:string) (stream:#Stream) = 
     async{
-        let! blob = GetBlobReferenceInContainer container blobName
+        let blob = GetBlobReferenceInContainer container blobName
         let! res = blob.DownloadToStreamAsync stream |> Async.AwaitIAsyncResult
         stream.Seek(0L, SeekOrigin.Begin) |> ignore
     }
@@ -75,29 +71,19 @@ let DownloadBlobStream containerName blobName (stream:#Stream) =
 let DownloadBlobFromContainer<'a> (container:CloudBlobContainer) (blobName:string) = 
     let doTask = Async.AwaitIAsyncResult >> Async.Ignore
     async{
-        let! blob = GetBlobReferenceInContainer container blobName
+        let blob = GetBlobReferenceInContainer container blobName
         match typeof<'a> with
-        | st when st = typeof<Stream> -> 
+        | str when str = typeof<string> -> 
             use ms = new MemoryStream()
-            do! blob.DownloadToStreamAsync(ms) |> doTask
-            return ms :> Stream |> box :?> 'a
+            do! blob.DownloadToStreamAsync(ms) |> doTask 
+            return Encoding.ASCII.GetString(ms.ToArray()) |> box :?> 'a
         | b when b = typeof<byte[]> -> 
             let ba: byte [] = Array.zeroCreate 0
             let! ok = blob.DownloadToByteArrayAsync(ba, 0) |> Async.AwaitTask
             return ba |> box :?> 'a
-        | str when str = typeof<string> -> 
-            use ms = new MemoryStream()
-            do! blob.DownloadToStreamAsync(ms) |> doTask           
-            return Encoding.ASCII.GetString(ms.ToArray()) |> box :?> 'a
         | _ -> 
             failwith "This type is not supported"
-            use ms = new MemoryStream()
-            do! blob.DownloadToStreamAsync(ms) |> doTask
-            let formatter = new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter();
-            ms.Seek(0L, SeekOrigin.Begin) |> ignore
-            match ms.Length with
-            | 0L -> return Unchecked.defaultof<'a>
-            | _ -> return formatter.Deserialize(ms) |> box :?> 'a
+            return "This type is not supported" |> box :?> 'a
     }
 
 let DownloadBlob<'a> (containerName:string) (blobName:string) = 
@@ -108,7 +94,7 @@ let DownloadBlob<'a> (containerName:string) (blobName:string) =
 
 let DeleteBlobFromContainer (container:CloudBlobContainer) (blobName:string) = 
     async {
-        let! blob = GetBlobReferenceInContainer container blobName
+        let blob = GetBlobReferenceInContainer container blobName
         return! blob.DeleteIfExistsAsync() |> Async.AwaitTask
     }
 
